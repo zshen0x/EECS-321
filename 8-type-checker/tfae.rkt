@@ -103,11 +103,19 @@
                                                              "type-error: expected function match argument")])]
                           [else (error 'type-check
                                        "type-error: expected arrowT")]))]
-    [consl (fst rst) (numT)]
-    [firstl (lst) (numT)]
-    [restl (lst) (numT)]
-    [nil (typ) (numT)]
-    [mtl? (lst) (numT)]))
+    [nil (typ) (listT typ)]
+    [consl (fst rst) (let ([fst-typ (type-check fst env)]
+                           [rst-typ (type-check rst env)])
+                       (type-case Type rst-typ
+                         [listT (τ) (cond
+                                        [(equal? fst-typ τ) rst-typ]
+                                        [else (error 'type-check "type-error expected same type")])]
+                         [else (error 'type-check "type-error expected listT")]))]
+    [firstl (lst) (type-check lst env)]
+    [restl (lst) (type-check lst env)]
+    [mtl? (lst) (type-case Type (type-check lst env)
+                  [listT (τ) (boolT)]
+                  [else (error 'type-check "type-error expected listT")])]))
 
 (define (type-check-expr [a-tfae : TFAE]) : Type
   (type-check a-tfae (mtEnv)))
@@ -124,6 +132,20 @@
 (test (type-check-expr (fun 'x (numT) (add (id 'x) (num 0)))) (arrowT (numT) (numT)))
 (test (type-check-expr (app (fun 'x (numT) (add (id 'x) (num 0))) (num 2))) (numT))
 (test/exn (type-check-expr (app (fun 'x (numT) (add (id 'x) (num 0))) (bool #t))) "type-error")
+(test (type-check-expr (fun 'x (numT) (fun 'y (boolT) (ifthenelse (id 'y) (id 'x) (id 'x)))))
+      (arrowT (numT) (arrowT (boolT) (numT))))
+
+(test (type-check-expr (nil (boolT))) (listT (boolT)))
+(test (type-check-expr (consl (num 1) (consl (num 2) (nil (numT))))) (listT (numT)))
+(test/exn (type-check-expr (consl (num 1) (nil (boolT)))) "type-error")
+(test (type-check-expr (firstl (consl (bool #t) (consl (bool #f) (nil (boolT))))))
+      (type-check-expr (restl (firstl (consl (bool #t) (consl (bool #f) (nil (boolT))))))))
+(test (type-check-expr (nil (boolT))) (listT (boolT)))
+(test/exn (type-check-expr (consl (bool #f) (nil (arrowT (numT) (boolT))))) "type-error")
+(test (type-check-expr (app (fun 'x (boolT)
+                                 (mtl? (consl (bool #t) (consl (id 'x) (nil (boolT))))))
+                            (bool #f)))
+      (boolT))
 
 
 
