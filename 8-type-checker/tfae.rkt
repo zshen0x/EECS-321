@@ -146,6 +146,31 @@
                                  (mtl? (consl (bool #t) (consl (id 'x) (nil (boolT))))))
                             (bool #f)))
       (boolT))
+(test/exn (type-check-expr (add (num 1) (bool #f))) "type-error")
+(test/exn (type-check-expr (sub (num 1) (fun 'sks (boolT) (id 'sks)))) "type-error")
+(test/exn (type-check-expr (eql (num 1) (app (fun 'x (boolT) (id 'x)) (bool #f)))) "type-error")
+(test/exn (type-check-expr (app (add (num 1) (num 2)) (num 1))) "type-error")
+(test/exn (type-check-expr (consl (num 1) (bool #t))) "type-error")
+(test/exn (type-check-expr (mtl? (consl (num 1) (bool #t)))) "type-error")
+(test/exn (type-check-expr (mtl? (num 1))) "type-error")
+
+(test (type-check-expr (fun 'x (boolT)
+                            (fun 'y (numT)
+                                 (fun 'z (numT)
+                                      (ifthenelse (id 'x)
+                                                  (id 'y)
+                                                  (id 'z))))))
+      (arrowT (boolT) (arrowT (numT) (arrowT (numT) (numT)))))
+
+(test (type-check-expr (app (fun 'x (boolT)
+                                 (fun 'y (numT)
+                                      (fun 'z (numT)
+                                           (ifthenelse (id 'x)
+                                                       (id 'y)
+                                                       (id 'z)))))
+                            (bool #f)))
+      (arrowT (numT) (arrowT (numT) (numT))))
+
 
 
 
