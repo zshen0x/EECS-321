@@ -111,7 +111,9 @@
                                         [(equal? fst-typ τ) rst-typ]
                                         [else (error 'type-check "type-error expected same type")])]
                          [else (error 'type-check "type-error expected listT")]))]
-    [firstl (lst) (type-check lst env)]
+    [firstl (lst) (type-case Type (type-check lst env)
+                    [listT (τ) τ]
+                    [else (error 'type-check "type-error expected listT")])]
     [restl (lst) (type-check lst env)]
     [mtl? (lst) (type-case Type (type-check lst env)
                   [listT (τ) (boolT)]
@@ -121,6 +123,7 @@
   (type-check a-tfae (mtEnv)))
 
 
+(print-only-errors #t)
 (test (type-check-expr (num 2)) (numT))
 (test (type-check-expr (bool #f)) (boolT))
 (test (type-check-expr (add (num 10) (sub (num 1) (num 2)))) (numT))
@@ -170,6 +173,47 @@
                                                        (id 'z)))))
                             (bool #f)))
       (arrowT (numT) (arrowT (numT) (numT))))
+
+(test (type-check-expr (firstl (consl (num 4) (consl (num 5) (nil (numT))))))
+      (numT))
+
+(test (type-check-expr
+       (firstl (consl (fun 'x (numT) (num 6)) (nil (arrowT (numT) (numT))))))
+      (arrowT (numT) (numT)))
+(test (type-check-expr (firstl (nil (numT))))
+      (numT))
+(test (type-check-expr (firstl (consl (bool #f) (nil (boolT))))) (boolT))
+(test (type-check-expr
+       (firstl
+        (consl
+         (fun 'x (numT) (eql (id 'x) (num 6)))
+         (nil (arrowT (numT) (boolT))))))
+      (arrowT (numT) (boolT)))
+      
+(test (type-check-expr (firstl (nil (boolT)))) (boolT))
+(test (type-check-expr
+       (firstl
+        (restl
+         (consl
+          (ifthenelse
+           (bool #f)
+           (fun 'x (numT) (id 'x))
+           (fun 'y (numT) (add (id 'y) (num 3))))
+          (nil (arrowT (numT) (numT)))))))
+      (arrowT (numT) (numT)))
+      
+(test (type-check-expr
+       (app
+        (firstl
+         (restl
+          (consl
+           (ifthenelse
+            (bool #f)
+            (fun 'x (numT) (id 'x))
+            (fun 'y (numT) (add (id 'y) (num 3))))
+           (nil (arrowT (numT) (numT))))))
+        (num 5)))
+      (numT))
 
 
 
