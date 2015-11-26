@@ -381,12 +381,15 @@ Proof.
   omega.
 Qed.
 
+(* Note the change to this definition from what we did in class!       *)
+(* The argument order to plus_b has been switched, this change will    *)
+(* simplify the proof of correctness.                                  *)
 Fixpoint mult_b (b1s b2s : list bool) : list bool :=
   match b1s with
     | [] =>  []
     | b1 :: b1s_tail =>
       match b1 with
-        | true => plus_b (false::mult_b b1s_tail b2s) b2s
+        | true => plus_b b2s (false::mult_b b1s_tail b2s)
         | false => false :: mult_b b1s_tail b2s
       end
   end.
@@ -421,12 +424,43 @@ library with two additional functions
 (* 
 Exercise 1: A Theorem About Multiplication                          
 Prove the following correctness theorem about our definition of     
-multiplication
+multiplication.
+
+You may find the following theorems from Coq's multiplication
+library helpful in proving mult_correct:
+
+Theorem mult_plus_distr_r : forall n m p, (n + m) * p = n * p + m * p.
+
+Theorem mult_plus_distr_l : forall n m p, n * (m + p) = n * m + n * p.
 *)
 
 Theorem mult_correct :
   forall b1 b2, to_nat (mult_b b1 b2) = to_nat b1 * to_nat b2.
 Proof.
+  intro b1.
+  induction b1.
+  intro b2.
+  compute.
+  reflexivity.
+  
+  intro b2.
+  destruct a.
+  simpl.
+  rewrite plus_correct.
+  simpl.
+  rewrite IHb1.
+  rewrite mult_plus_distr_r.
+  rewrite mult_plus_distr_r.
+  simpl.
+  rewrite mult_plus_distr_r.
+  omega.
+  
+  simpl.
+  rewrite IHb1.
+  rewrite mult_plus_distr_r.
+  rewrite mult_plus_distr_r.
+  
+  omega.
 Qed.
 
 
@@ -438,6 +472,43 @@ Prove that our plus_b function is commutative
 Theorem plus_commutative :
   forall b1 b2, plus_b b1 b2 = plus_b b2 b1.
 Proof.
+  intro b1.
+  induction b1.
+  intro b2.
+  destruct b2.
+  reflexivity.
+  simpl.
+  reflexivity.
+  
+  intro b2.
+  destruct a.
+  simpl.
+  destruct b2.
+  compute.
+  reflexivity.
+  
+  rewrite IHb1.
+  destruct b.
+  simpl.
+  reflexivity.
+  
+  simpl.
+  reflexivity.
+  
+  simpl.
+  destruct b2.
+  
+  simpl.
+  reflexivity.
+  
+  destruct b.
+  simpl.
+  rewrite IHb1.
+  reflexivity.
+  
+  simpl.
+  rewrite IHb1.
+  reflexivity.
 Qed.
 
 
@@ -454,6 +525,50 @@ Exercise 3: add1 commutes with plus
 Theorem add1_commutes_with_plus :
   forall b1 b2, plus_b (add1_b b1) b2 = add1_b (plus_b b1 b2).
 Proof.
+  intro b1.
+  induction b1.
+  intro b2.
+  simpl.
+  destruct b2.
+  compute.
+  reflexivity.
+  
+  destruct b.
+  simpl.
+  reflexivity.
+  
+  simpl.
+  reflexivity.
+  
+  intro b2.
+  
+  destruct a.
+  simpl.
+  
+  destruct b2.
+  simpl.
+  reflexivity.
+  
+  destruct b.
+  simpl.
+  rewrite IHb1.
+  reflexivity.
+  
+  simpl.
+  rewrite IHb1.
+  reflexivity.
+  
+  simpl.
+  destruct b2.
+  simpl.
+  reflexivity.
+  
+  destruct b.
+  simpl.
+  reflexivity.
+  
+  simpl.
+  reflexivity.
 Qed.
 
 (*
@@ -463,6 +578,97 @@ Exercise 4: Binary addition is associative
 Theorem plus_b_associative :
   forall b1 b2 b3, plus_b b1 (plus_b b2 b3) = plus_b (plus_b b1 b2) b3.
 Proof.
+  intro b1.
+  induction b1.
+  intro b2.
+  simpl.
+  intro b3.
+  reflexivity.
+  
+  intro b2.
+  induction b2.
+  intro b3.
+  
+  destruct a.
+  simpl.
+  destruct b3.
+  reflexivity.
+  destruct b.
+  simpl.
+  reflexivity.
+  reflexivity.
+  simpl.
+  
+  destruct b3.
+  reflexivity.
+  destruct b.
+  reflexivity.
+  reflexivity.
+  
+  intro b3.
+  induction b3.
+  destruct a.
+  simpl.
+  destruct a0.
+  simpl.
+  reflexivity.
+  simpl.
+  reflexivity.
+  destruct a0.
+  simpl.
+  reflexivity.
+  simpl.
+  reflexivity.
+  
+  destruct a1.
+  simpl.
+  destruct a0.
+  destruct a.
+  simpl.
+  rewrite add1_commutes_with_plus.
+  rewrite plus_commutative.
+  rewrite add1_commutes_with_plus.
+  
+  rewrite plus_commutative.
+  rewrite IHb1.
+  reflexivity.
+  
+  simpl.
+  rewrite plus_commutative.
+  rewrite add1_commutes_with_plus.
+  rewrite plus_commutative.
+  rewrite IHb1.
+  reflexivity.
+  
+  destruct a.
+  simpl.
+  rewrite IHb1.
+  reflexivity.
+  simpl.
+  rewrite IHb1.
+  reflexivity.
+  simpl.
+  destruct a0.
+  
+  destruct a.
+  simpl.
+  rewrite plus_commutative.
+  rewrite add1_commutes_with_plus.
+  rewrite plus_commutative.
+  rewrite IHb1.
+  reflexivity.
+  
+  simpl.
+  rewrite IHb1.
+  reflexivity.
+  
+  destruct a.
+  simpl.
+  rewrite IHb1.
+  reflexivity.
+  simpl.
+  rewrite IHb1.
+  reflexivity.
 Qed.
 
 
@@ -483,14 +689,82 @@ For simplicity the result of calling sub_1 on a representation of 0 should
 also represent 0.
 *)
 
-(*
-Exercise 6: Define log_b
-Write a definition for the function log_b in Coq using the Fixpoint form.
-This is the ceiling of the log function.
-Your definition should perform the same operation as Racket's `integer-length`
-function. 
+(* 
+
+Extend our binary number arithmetic library to include other
+functions: subtraction by one and (something like) logarithm.
+
+Exercise 5: Define sub1_b.
+
+
+Write a definition for the function sub1_b in Coq using the Fixpoint
+form. The result of calling sub_1 on any representation of 0 should
+also represent 0.
+
+Exercise 6: Define log_b.
+
+This function should return the base2 log of a number or, more
+precisely, it should return the same answer as this function (except
+that this function has imprecision due to floating point arithmetic):
+
+(define (log_b n)
+   (+ 1 (floor (/ (log n) (log 2)))))
+
+The Racket function `integer-length` computes the correct answers in
+an exact manner, so use the above to give you a sense of what the
+right answers are and use `integer-length` if you want to check on
+some (large) values.
+
+For both 5 and 6, a correct solution satisfies the test cases at the
+end of this file and not be longer than about 10 lines, give or take.
+
 *)
 
+Fixpoint check_exist_true (bs : list bool) : bool :=
+  match bs with
+    | [] => false
+    | b :: bs_tail =>
+      match b with 
+        | true => true
+        | false => check_exist_true bs_tail
+      end
+  end.
+
+Fixpoint sub1_b (bs : list bool) : list bool :=
+  match check_exist_true bs with 
+    | true =>
+      match bs with
+        | [] => []
+        | b :: bs_tail =>
+        match b with
+          | true => false :: bs_tail
+          | false => true :: sub1_b bs_tail
+        end
+      end
+    | false => []
+  end.
+  
+  
+  
+Fixpoint count_length (bs : list bool) : list bool :=
+  match bs with 
+    | [] => []
+    | b :: bs_tail => add1_b (count_length bs_tail)
+  end.
+  
+Fixpoint log_b_help (bs : list bool) : list bool :=
+  match bs with
+    | [] => []
+    | a :: bs_tail => 
+      match a with
+        | true => add1_b (count_length bs_tail)
+        | false => log_b_help bs_tail
+      end
+  end.
+
+Fixpoint log_b (bs : list bool) : list bool :=
+  log_b_help (rev bs).
+  
 
 (***********************************************************************)
 (*                 TEST CASES FOR `sub1_b` AND `log_b`                 *)
@@ -802,6 +1076,12 @@ Proof.
   reflexivity.
 Qed.
 
+Theorem sub1_b_ex51 : to_nat (sub1_b [false; false; false; false]) = 0.
+Proof.
+  compute.
+  reflexivity.
+Qed.
+
 Theorem log_b_ex0 : log_b [] = [].
 Proof.
   compute.
@@ -1107,4 +1387,9 @@ Proof.
   compute.
   reflexivity.
 Qed.
-  
+
+Theorem log_b_ex51 : to_nat (log_b [false; false; false; false]) = 0.
+Proof.
+  compute.
+  reflexivity.
+Qed.

@@ -381,12 +381,15 @@ Proof.
   omega.
 Qed.
 
+(* Note the change to this definition from what we did in class!       *)
+(* The argument order to plus_b has been switched, this change will    *)
+(* simplify the proof of correctness.                                  *)
 Fixpoint mult_b (b1s b2s : list bool) : list bool :=
   match b1s with
     | [] =>  []
     | b1 :: b1s_tail =>
       match b1 with
-        | true => plus_b (false::mult_b b1s_tail b2s) b2s
+        | true => plus_b b2s (false::mult_b b1s_tail b2s)
         | false => false :: mult_b b1s_tail b2s
       end
   end.
@@ -421,7 +424,14 @@ library with two additional functions
 (* 
 Exercise 1: A Theorem About Multiplication                          
 Prove the following correctness theorem about our definition of     
-multiplication
+multiplication.
+
+You may find the following theorems from Coq's multiplication
+library helpful in proving mult_correct:
+
+Theorem mult_plus_distr_r : forall n m p, (n + m) * p = n * p + m * p.
+
+Theorem mult_plus_distr_l : forall n m p, n * (m + p) = n * m + n * p.
 *)
 
 Theorem mult_correct :
@@ -467,28 +477,33 @@ Qed.
 
 
 (* 
-We would like to extend our binary number arithmetic library to include 
-other useful functions. In particular we would like to implement the 
-functions `sub1_b` and `log_b` that subtract 1 from a binary numner and
-return the `ceiling` of the log of a binary numberr espectively.
 
-For the following exercises, a correct solution should satisfy the test cases
-at the end of this file.
-*)
+Extend our binary number arithmetic library to include other
+functions: subtraction by one and (something like) logarithm.
 
-(*
-Exercise 5: Define sub1_b
-Write a definition for the function sub1_b in Coq using the Fixpoint form.
-For simplicity the result of calling sub_1 on a representation of 0 should
+Exercise 5: Define sub1_b.
+
+Write a definition for the function sub1_b in Coq using the Fixpoint
+form. The result of calling sub_1 on any representation of 0 should
 also represent 0.
-*)
 
-(*
-Exercise 6: Define log_b
-Write a definition for the function log_b in Coq using the Fixpoint form.
-This is the ceiling of the log function.
-Your definition should perform the same operation as Racket's `integer-length`
-function. 
+Exercise 6: Define log_b.
+
+This function should return the base2 log of a number or, more
+precisely, it should return the same answer as this function (except
+that this function has imprecision due to floating point arithmetic):
+
+(define (log_b n)
+   (+ 1 (floor (/ (log n) (log 2)))))
+
+The Racket function `integer-length` computes the correct answers in
+an exact manner, so use the above to give you a sense of what the
+right answers are and use `integer-length` if you want to check on
+some (large) values.
+
+For both 5 and 6, a correct solution satisfies the test cases at the
+end of this file and not be longer than about 10 lines, give or take.
+
 *)
 
 
@@ -802,6 +817,12 @@ Proof.
   reflexivity.
 Qed.
 
+Theorem sub1_b_ex51 : to_nat (sub1_b [false; false; false; false]) = 0.
+Proof.
+  compute.
+  reflexivity.
+Qed.
+
 Theorem log_b_ex0 : log_b [] = [].
 Proof.
   compute.
@@ -1107,4 +1128,9 @@ Proof.
   compute.
   reflexivity.
 Qed.
-  
+
+Theorem log_b_ex51 : to_nat (log_b [false; false; false; false]) = 0.
+Proof.
+  compute.
+  reflexivity.
+Qed.
