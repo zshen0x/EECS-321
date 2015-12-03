@@ -1,1 +1,1 @@
-# PL-Coursework @ Northwestern
+# PL @ Northwestern
