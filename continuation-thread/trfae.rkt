@@ -88,8 +88,9 @@
 
 ;; the tid's are the store locations for those thds
 (define-type Thd
-  [active (tid integer?) (go any/c)] ;; a trick
+  [active (tid integer?) (go (-> Store? Thds*Store?))] ;; a trick
   [blocked (tid integer?) (continue (-> TRFAE-Value? Store? Thds*Store?))]
+  [notify (tid integer?) (message TRFAE-Value?)]
   [done (v TRFAE-Value?)])
 
 ;; parser: s-expr -> TRFAE
@@ -266,10 +267,7 @@
                                                                      (λ (v2 st2)
                                                                        (type-case TRFAE-Value v1
                                                                          [thdV (loc)
-                                                                               (thds*store (list (active loc
-                                                                                                         (λ (continue)
-                                                                                                           (λ (a-st)
-                                                                                                             (continue v2 a-st))))
+                                                                               (thds*store (list (notify loc v2)
                                                                                                  (active addr
                                                                                                          (λ (a-st)
                                                                                                            (k v2 a-st))))
@@ -299,21 +297,20 @@
 ; run - update - cycle
 (define/contract (thds-merge thds-lst others)
   (-> (listof Thd?) (listof Thd?) (listof Thd?))
-  (cond
-    [(empty? others) thds-lst]
-    [else (let ([a-thd (first others)])
-            (type-case Thd a-thd
-              [active (tid pseudo-go) (let ([blked-thd (findf (λ (td)
-                                                                (type-case Thd td
-                                                                  [blocked (id k) (equal? tid id)]
-                                                                  [else #f]))
-                                                              thds-lst)])
-                                        (cond
-                                          [(blocked? blked-thd) (append (list* (active tid (pseudo-go (blocked-continue blked-thd)))
-                                                                               (rest others))
-                                                                        (remove blked-thd thds-lst))]
-                                          [else (list* a-thd (thds-merge thds-lst (rest others)))]))]
-              [else (list* a-thd (thds-merge thds-lst (rest others)))]))]))
+  (letrec ([all-thds (append thds-lst others)]
+           [blocked-thds (filter (λ (td) (blocked? td)) all-thds)]
+           [messages (filter (λ (td) (notify? td)) all-thds)]
+           [to-be-wakeup (for/list ([m messages]
+                                    #:when (blocked? (findf (λ (ele) (equal? (blocked-tid ele) (notify-tid m))) blocked-thds)))
+                           (list m (findf (λ (ele) (equal? (blocked-tid ele) (notify-tid m))) blocked-thds)))]
+           [wakeups (map (λ (p) (active (notify-tid (first p))
+                                        (λ (sto)
+                                          ((blocked-continue (second p)) (notify-message (first p))
+                                                                         sto))))
+                         to-be-wakeup)]
+           [to-remove (flatten to-be-wakeup)])
+    (append (filter (λ (td) (not (member td to-remove))) all-thds)
+            wakeups)))
 
 (define (threads-scheduler t*s)
   (type-case Thds*Store t*s
@@ -347,15 +344,17 @@
              [done (v) (type-case TRFAE-Value v
                          [numV (n) n]
                          [closureV (p b d) 'procedure]
-                         [thdV (addr) addr]
+                         [thdV (addr) 'thd]
                          [recV (a b) (error 'bug "never reach here!")])]
              [blocked (tid continue) 'blocked]
              [else (error 'bug "never reach here!")]))
          (threads-scheduler thds-pool))))
 
-;; test cases
-(print-only-errors)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; test case
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(print-only-errors)
 (define (same-elements? l1 l2)
   (define (sub-mutiset? l1 l2)
     (cond
@@ -368,40 +367,14 @@
        (interp-expr (parse `{seqn {spawn 1} 2}))
        (list 1 2))
       #t)
+
+;; spawn's argument is in the same scope as the spawn expression
 (test (same-elements?
-           (interp-expr (parse `{with {x 1} {seqn {spawn x} 2}}))
-           (list 1 2))
+       (interp-expr (parse `{with {x 1} {seqn {spawn x} 2}}))
+       (list 1 2))
       #t)
 
-
-;; exceptions raised in a thread kill the entire program
-(test/exn (interp-expr (parse '{spawn {0 0}}))
-          "application expected procedure")
-
-
-(test/exn (interp-expr
-           (parse '{seqn {spawn {0 0}}
-                         {{fun {x} {x x}} {fun {x} {x x}}}}))
-          "application expected procedure")
-
-(test (same-elements? (interp-expr (parse '{seqn {spawn {+ 1 {- 10 1}}}
-                                                 {{fun {x} {+ x 1}} 1}}))
-                      (list 10 2))
-      #t)
-
-;; these two tests make sure that your implementation
-;; doesn't commit to a particular thread forever
-(test/exn (interp-expr
-           (parse '{seqn {spawn {{fun {x} {x x}} {fun {x} {x x}}}}
-                         {0 0}}))
-          "application expected procedure")
-
-(test (same-elements? (interp-expr (parse '{seqn {spawn {+ 1 {- 10 1}}}
-                                                 {receive}}))
-                      (list 'blocked 10))
-      #t)
-
-  ;; deliveries must be made in order
+;; deliveries must be made in order
 (test (same-elements?
        (interp-expr
         (parse `{with {t1 {spawn {seqn {receive} {receive}}}}
@@ -410,6 +383,30 @@
                                   3}}}))
        (list 2 3))
       #t)
+
+
+;; if the result of evaluation of a thread is a thread,
+;; the interpreter returns 'thd
+(test (same-elements? (interp-expr (parse '(spawn 1)))
+                      (list 'thd 1))
+      #t)          
+
+;; exceptions raised in a thread kill the entire program
+(test/exn (interp-expr (parse '{spawn {0 0}}))
+          "application expected procedure")
+
+;; these two tests make sure that your implementation
+;; doesn't commit to a particular thread forever
+(test/exn (interp-expr
+           (parse '{seqn {spawn {{fun {x} {x x}} {fun {x} {x x}}}}
+                         {0 0}}))
+          "application expected procedure")
+
+(test/exn (interp-expr
+           (parse '{seqn {spawn {0 0}}
+                         {{fun {x} {x x}} {fun {x} {x x}}}}))
+          "application expected procedure")
+
 
 
 ;(test/exn (interp-expr (parse '{struct {z {get {struct {z 0}} y}}}))
