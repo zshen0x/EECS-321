@@ -39,7 +39,7 @@
   [app (fun-expr TRFAE?)
        (arg-expr TRFAE?)]
   [id (name symbol?)]
-  [record (listof pair?)]
+  [record (listof list?)]
   [record-get (rcd TRFAE?)
               (id symbol?)]
   [record-set (rcd TRFAE?)
@@ -64,8 +64,9 @@
   [closureV (param symbol?)
             (body TRFAE?)
             (ds DefrdSub?)]
-  [recV (fields (listof symbol?))
-        (ptrs (listof exact-nonnegative-integer?))] ;; records
+  [recV (address integer?)
+        (ids (listof symbol?))
+        (ptrs (listof integer?))] ;; records
 
   ;; thd values hold the location in the
   ;; store where undelivered values wait
@@ -104,7 +105,7 @@
     [`{with {,id ,e1} ,e2} (parse `{{fun {,id} ,e2} ,e1})]
     [`{fun {,(? symbol? param)} ,bd} (fun param (parse bd))]
     [`{struct ,(? cons? fields) ...}
-     (record (map (λ (p) (cons (first p) (parse (last p)))) fields))]
+     (record (map (λ (p) (list (first p) (parse (last p)))) fields))]
     [`{get ,e1 ,(? symbol? id)} (record-get (parse e1) id)]
     [`{set ,e1 ,(? symbol? id) ,e2} (record-set (parse e1) id (parse e2))]
     [`{spawn ,expr} (spawn (parse expr))]
@@ -204,19 +205,20 @@
     [fun (param body) (thds*store (list (active addr (λ (sto)
                                                        (k (closureV param body ds) sto))))
                                   st)]
+    ;; to do evaluate function first
     [app (fun-expr arg-expr)
          (thds*store (list (active addr
                                    (λ (sto)
-                                     (execute-thd arg-expr
+                                     (execute-thd fun-expr
                                                   ds
                                                   addr
                                                   sto
-                                                  (λ (arg-v sto1)
-                                                    (execute-thd fun-expr
+                                                  (λ (clo-v sto1)
+                                                    (execute-thd arg-expr
                                                                  ds
                                                                  addr
                                                                  sto1
-                                                                 (λ (clo-v sto2)
+                                                                 (λ (arg-v sto2)
                                                                    (type-case TRFAE-Value clo-v
                                                                      [closureV (param body clo-ds)
                                                                                (letrec ([top-loc (add1 (top-store sto2))]
@@ -230,13 +232,87 @@
                                                                                               addr
                                                                                               sto3
                                                                                               k))]
-                                                                     [else (error "application expected procedure")]))))))))
+                                                                     [else (error 'execute-thd "application expected procedure")]))))))))
                      st)]
     
     [id (name) (thds*store (list (active addr (λ (sto) (k (lookup-store (lookup-defrdsub name ds) sto) sto)))) st)]
-    [record (kv-lst) (error "to be complete")]                                  
-    [record-get (rcd name) (error "to be complete")]
-    [record-set (rcd name val) (error "to be complete")]
+    [record (fields)
+            (thds*store (list (active addr (λ (sto)
+                                             (cond
+                                               [(empty? fields) (letrec ([top-loc (add1 (top-store sto))]
+                                                                         [a-recv (recV top-loc empty empty)]
+                                                                         [sto2 (alloc-store top-loc a-recv sto)])
+                                                                  (k a-recv sto2))]
+                                               [else
+                                                (letrec ([fst (first fields)]
+                                                         [id (first fst)]
+                                                         [val-expr (second fst)]
+                                                         [rst (rest fields)])
+                                                  (execute-thd val-expr
+                                                               ds
+                                                               addr
+                                                               sto
+                                                               (λ (v1 sto1)
+                                                                 (execute-thd (record rst)
+                                                                              ds
+                                                                              addr
+                                                                              sto1
+                                                                              (λ (v2 sto2)
+                                                                                (letrec ([recv-loc (recV-address v2)]
+                                                                                         [ids (recV-ids v2)]
+                                                                                         [ptrs (recV-ptrs v2)]
+                                                                                         [v1-ptr (add1 (top-store sto2))]
+                                                                                         [sto3 (alloc-store v1-ptr v1 sto2)]
+                                                                                         [nrecv (recV recv-loc
+                                                                                                      (cons id ids)
+                                                                                                      (cons v1-ptr ptrs))])
+                                                                                  (k nrecv (set-store recv-loc nrecv sto3))))))))]))))
+                        st)]
+    [record-get (rcd-expr named-id)
+                (thds*store (list (active addr
+                                          (λ (sto)
+                                            (execute-thd rcd-expr
+                                                         ds
+                                                         addr
+                                                         sto
+                                                         (λ (v1 sto1)
+                                                           (type-case TRFAE-Value v1
+                                                             [recV (addr ids ptrs)
+                                                                   (let ([ptr (for/first ([id ids]
+                                                                                          [ptr ptrs]
+                                                                                          #:when (equal? id named-id))
+                                                                                ptr)])
+                                                                       (cond
+                                                                         [(integer? ptr) (k (lookup-store ptr sto1) sto1)]
+                                                                         [else (error 'execute-thd "unknown field")]))]
+                                                             [else (error 'execute-thd "record operation expected record")]))))))
+                            st)]
+    
+    [record-set (rcd-expr named-id val-expr)
+                (thds*store (list (active addr
+                                          (λ (sto)
+                                            (execute-thd rcd-expr
+                                                         ds
+                                                         addr
+                                                         sto
+                                                         (λ (v1 sto1)
+                                                           (execute-thd val-expr
+                                                                        ds
+                                                                        addr
+                                                                        sto1
+                                                                        (λ (v2 sto2)
+                                                                          (type-case TRFAE-Value v1
+                                                                            [recV (addr ids ptrs)
+                                                                                  (let ([ptr (for/first ([id ids]
+                                                                                                         [ptr ptrs]
+                                                                                                         #:when (equal? id named-id))
+                                                                                               ptr)])
+                                                                                    (cond
+                                                                                      [(integer? ptr) (let ([oldv (lookup-store ptr sto2)])
+                                                                                                        (k oldv (set-store ptr v2 sto2)))]
+                                                                                      [else (error 'execute-thd "unknown field")]))]
+                                                                            [else (error 'execute-thd "record operation expected record")]))))))))
+                            st)]
     [spawn (thd-expr) (letrec ([new-loc (add1 (top-store st))]
                                [thd-val (thdV new-loc)]
                                [st1 (alloc-store new-loc thd-val st)])
@@ -255,24 +331,24 @@
     [deliver (thd-expr val-expr)
              (thds*store (list (active addr
                                        (λ (sto)
-                                         (execute-thd thd-expr
+                                         (execute-thd val-expr
                                                       ds
                                                       addr
                                                       sto
                                                       (λ (v1 st1)
-                                                        (execute-thd val-expr
+                                                        (execute-thd thd-expr
                                                                      ds
                                                                      addr
                                                                      st1
                                                                      (λ (v2 st2)
-                                                                       (type-case TRFAE-Value v1
+                                                                       (type-case TRFAE-Value v2
                                                                          [thdV (loc)
-                                                                               (thds*store (list (notify loc v2)
+                                                                               (thds*store (list (notify loc v1)
                                                                                                  (active addr
                                                                                                          (λ (a-st)
-                                                                                                           (k v2 a-st))))
+                                                                                                           (k v1 a-st))))
                                                                                            st2)]
-                                                                         [else (error "deliver expected thd")]))))))))
+                                                                         [else (error 'execute-id "deliver expected thd")]))))))))
                          st)]
     
     [receive () (thds*store
@@ -331,7 +407,6 @@
                             [else (threads-scheduler t*s)]))])])) ;; when all thread are blocked forever loop
 
 (define (interp-expr a-trfae)
-  ;; initialize
   (let ([thds-pool (execute-thd a-trfae
                                 (mtSub)
                                 0
@@ -343,18 +418,57 @@
            (type-case Thd done-thd
              [done (v) (type-case TRFAE-Value v
                          [numV (n) n]
-                         [closureV (p b d) 'procedure]
+                         [closureV (x y z) 'procedure]
                          [thdV (addr) 'thd]
-                         [recV (a b) (error 'bug "never reach here!")])]
+                         [recV (x y z) (error 'bug "never reach here!")])]
              [blocked (tid continue) 'blocked]
              [else (error 'bug "never reach here!")]))
          (threads-scheduler thds-pool))))
+
+
+;(define (threads-scheduler-debug t*s)
+;  (type-case Thds*Store t*s
+;    [thds*store (thds st)
+;                (cond
+;                  [(not (for/or ([td thds]) (active? td))) t*s] ;no active thread, output thds
+;                  [else (let ([active-thds (filter (λ (thd) (active? thd)) thds)])
+;                          (cond
+;                            [(not (empty? active-thds)) (letrec ([a-thd (list-ref active-thds
+;                                                                                  (random (length active-thds)))]
+;                                                                 [rst-thds (remove a-thd thds)]
+;                                                                 [t1*s1 ((active-go a-thd) st)])
+;                                                          (type-case Thds*Store t1*s1
+;                                                            [thds*store (thds1 st1) (let ([t2*s1 (thds*store (thds-merge rst-thds
+;                                                                                                                         thds1)
+;                                                                                                             st1)])
+;                                                                                      (threads-scheduler-debug t2*s1))]))]
+;                            [else (threads-scheduler t*s)]))])]))
+;
+;(define (interp-expr-debug a-trfae)
+;  (let ([thds-pool (execute-thd a-trfae
+;                                (mtSub)
+;                                0
+;                                (aSto 0 (list (thdV 0)) (mtSto))
+;                                (λ (v st)
+;                                  (let ([st1 (set-store 0 (list v) st)])
+;                                    (thds*store (list (done v)) st1))))])
+;         (println (threads-scheduler-debug thds-pool))))
+
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; test case
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (print-only-errors)
+
+;; parser test cases
+#;#;#;
+(test (parse '5) (num 5))
+(test (parse '((fun (x) (+ x 1)) 10))
+      (app (fun 'x (add (id 'x) (num 1))) (num 10)))
+(test (parse '(with (f (fun (x) (+ x 1))) (f 10)))
+      (app (fun 'f (app (id 'f) (num 10))) (fun 'x (add (id 'x) (num 1)))))
+
 (define (same-elements? l1 l2)
   (define (sub-mutiset? l1 l2)
     (cond
@@ -363,83 +477,198 @@
                  (subset? (cdr l1) (remove (car l1) l2)))]))
   (and (sub-mutiset? l1 l2) (sub-mutiset? l2 l1)))
 
-(test (same-elements?
-       (interp-expr (parse `{seqn {spawn 1} 2}))
-       (list 1 2))
-      #t)
+;; basic test cases
+(test (interp-expr (parse '5)) '(5))
+(test (interp-expr (parse '{+ 5 5})) '(10))
+(test (interp-expr (parse '{- 3 5})) '(-2))
+(test/exn (interp-expr (parse 'x)) "free identifier")
+#;#;#;
+(test (interp (id 'x) (aSub 'x (numV 5) (mtSub)) (mtSto) (λ (ev s) (v*s ev s))) (v*s (numV 5) (mtSto)))
+(test (interp (id 'x) (aSub 'y (numV 6) (aSub 'x (numV 5) (mtSub))) (mtSto) (λ (ev s) (v*s ev s))) (v*s (numV 5) (mtSto)))
+(test (interp (add (num 5) (sub (add (num 3) (id 'x)) (id 'y)))
+              (aSub 'y (numV 6) (aSub 'x (numV 5) (mtSub))) (mtSto) (λ (ev s) (v*s ev s)))
+      (v*s (numV 7) (mtSto)))
+(test (interp-expr (parse '{with {x 5} {+ x x}})) '(10))
+#;
+(test (interp (parse '{fun {x} {+ x 1}}) (mtSub) (mtSto) (λ (ev s) (v*s ev s)))
+      (v*s (closureV 'x (add (id 'x) (num 1)) (mtSub)) (mtSto)))
+(test (interp-expr (parse '{{fun {x} {+ x 1}} 10})) '(11))
+(test/exn (interp-expr (parse '{with {x x} x}))
+          "free identifier")
+#;#;#;#;#;#;
+(test (interp (parse '{struct}) (mtSub) (mtSto) (λ (ev s) (v*s ev s)))
+      (v*s (recV '()) (mtSto)))
+(test (interp (parse '{struct {x 1}}) (mtSub) (mtSto) (λ (ev s) (v*s ev s)))
+      (v*s (recV '(0)) (aSto 0 'x (numV 1) (mtSto))))
+(test (interp (parse '{struct {x 1} {y 2}}) (mtSub) (mtSto) (λ (ev s) (v*s ev s)))
+      (v*s (recV '(0 1)) (aSto 1 'y (numV 2) (aSto 0 'x (numV 1) (mtSto)))))
+(test (interp (parse '{struct {x 1} {y 2} {z 3}}) (mtSub) (mtSto) (λ (ev s) (v*s ev s)))
+      (v*s (recV '(0 1 2)) (aSto 2 'z (numV 3) (aSto 1 'y (numV 2) (aSto 0 'x (numV 1) (mtSto))))))
+(test (interp (parse '{get {struct {x 1} {y 2} {z 3}} y}) (mtSub) (mtSto) (λ (ev s) (v*s ev s)))
+      (v*s (numV 2) (aSto 2 'z (numV 3) (aSto 1 'y (numV 2) (aSto 0 'x (numV 1) (mtSto))))))
+(test (interp (parse '{set {struct {x 1} {y 2} {z 3}} y 100}) (mtSub) (mtSto) (λ (ev s) (v*s ev s)))
+      (v*s (numV 2) (aSto 2 'z (numV 3) (aSto 1 'y (numV 100) (aSto 0 'x (numV 1) (mtSto))))))
+(test (interp-expr (parse '{with {q {struct {x 10}}}
+                                 {seqn {set q x 12} {get q x}}})) '(12))
 
-;; spawn's argument is in the same scope as the spawn expression
-(test (same-elements?
-       (interp-expr (parse `{with {x 1} {seqn {spawn x} 2}}))
-       (list 1 2))
-      #t)
+;; more test cases
+(test (interp-expr (parse '{with {x {+ 5 5}} {with {y {- x 3}} {+ y y}}}))
+      '(14))
+(test (interp-expr (parse '{with {x 5} {with {y {- x 3}} {+ y y}}}))
+      '(4))
+(test (interp-expr (parse '{with {x 5} {+ x {with {x 3} 10}}})) '(15))
+(test (interp-expr (parse '{with {x 5} {+ x {with {x 3} x}}})) '(8))
+(test (interp-expr (parse '{with {x 5} {with {x x} x}})) '(5))
+(test (interp-expr (parse '{with {x 5} {{fun {y} {+ x y}} 10}})) '(15))
+(test (interp-expr (parse '{with {x 5} {{fun {x} {+ x x}} 10}})) '(20))
+(test (interp-expr (parse '{with {f {fun {x} {+ x 1}}} {f 10}})) '(11))
+(test (interp-expr (parse '{with {x 3}
+                                 {with {f {fun {y} {+ x y}}}
+                                       {with {x 5} {f 4}}}}))
+      '(7))
+(test (interp-expr (parse '{{with {y 10} {fun {x} {+ y x}}} {with {y 7} y}}))
+      '(17))
 
-;; deliveries must be made in order
-(test (same-elements?
-       (interp-expr
-        (parse `{with {t1 {spawn {seqn {receive} {receive}}}}
-                      {seqn {deliver t1 1}
-                            {seqn {deliver t1 2}
-                                  3}}}))
-       (list 2 3))
-      #t)
+;; tests come with HW
+(test/exn (interp-expr (parse '{struct {z {get {struct {z 0}} y}}}))
+            "unknown field")
+(test (interp-expr (parse '{{fun {r} {get r x}} {struct {x 1}}})) '(1))
+(test (interp-expr (parse '{{fun {r} {seqn {set r x 5} {get r x}}}
+                            {struct {x 1}}})) '(5))
+(test (interp-expr (parse `{set {struct {x 42}} x 2})) '(42))
+(test (interp-expr (parse '{{{{{fun {g}
+                                    {fun {s}
+                                         {fun {r1}
+                                              {fun {r2}
+                                                   {+ {get r1 b}
+                                                      {seqn
+                                                       {{s r1} {g r2}}
+                                                       {+ {seqn
+                                                           {{s r2} {g r1}}
+                                                           {get r1 b}}
+                                                          {get r2 b}}}}}}}}
+                               {fun {r} {get r a}}}            ; g
+                              {fun {r} {fun {v} {set r b v}}}} ; s
+                             {struct {a 0} {b 2}}}             ; r1
+                            {struct {a 3} {b 4}}}))            ; r2
+      '(5))
 
+#;
+(interp-expr (parse '{with {b {struct {x 1}}}
+                           {with {f {fun {f}
+                                         {seqn {set b x 2}
+                                               {f f}}}}
+                                 {f f}}}))
 
-;; if the result of evaluation of a thread is a thread,
-;; the interpreter returns 'thd
-(test (same-elements? (interp-expr (parse '(spawn 1)))
-                      (list 'thd 1))
-      #t)          
+;; error testing
+(test/exn (interp-expr (parse '{with {q {struct}} {get q x}})) "unknown field")
+(test/exn (interp-expr (parse '{with {q {struct {y 1} {z 2}}} {get q x}})) "unknown field")
+(test/exn (interp-expr (parse '{get (+ 5 6) x})) "record operation expected record")
+(test/exn (interp-expr (parse '{deliver 1 2})) "deliver expected thd")
 
-;; exceptions raised in a thread kill the entire program
-(test/exn (interp-expr (parse '{spawn {0 0}}))
-          "application expected procedure")
-
-;; these two tests make sure that your implementation
-;; doesn't commit to a particular thread forever
+;; multi thd test
+(test (same-elements? (interp-expr (parse `{seqn {spawn 1} 2})) (list 1 2)) #t)
+(test (same-elements? (interp-expr (parse `{with {x 1} {seqn {spawn x} 2}})) (list 1 2)) #t)
+(test/exn (interp-expr (parse '{spawn {0 0}})) "application expected procedure")
+(test (same-elements? (interp-expr
+                       (parse `{with {t1 {spawn {seqn {receive} {receive}}}}
+                                     {seqn {deliver t1 1}
+                                           {seqn {deliver t1 2}
+                                                 3}}}))
+                      (list 2 3)) #t)
+#;
+(interp-expr (parse '{with {b {struct {x 1}}}
+                           {seqn {spawn {set b x 2}}
+                                 {seqn {spawn {set b x 3}}
+                                       {get b x}}}}))
 (test/exn (interp-expr
            (parse '{seqn {spawn {{fun {x} {x x}} {fun {x} {x x}}}}
                          {0 0}}))
           "application expected procedure")
-
 (test/exn (interp-expr
            (parse '{seqn {spawn {0 0}}
                          {{fun {x} {x x}} {fun {x} {x x}}}}))
           "application expected procedure")
+(test
+ (same-elements?
+  (interp-expr
+   (parse '{seqn {spawn {{{{{fun {g}
+                                 {fun {s}
+                                      {fun {r1}
+                                           {fun {r2}
+                                                {+ {get r1 b}
+                                                   {seqn
+                                                    {{s r1} {g r2}}
+                                                    {+ {seqn
+                                                        {{s r2} {g r1}}
+                                                        {get r1 b}}
+                                                       {get r2 b}}}}}}}}
+                            {fun {r} {get r a}}}            ; g
+                           {fun {r} {fun {v} {set r b v}}}} ; s
+                          {struct {a 0} {b 2}}}             ; r1
+                         {struct {a 3} {b 4}}}}
+                 {{fun {r} {get r x}} {struct {x 1}}}}))
+  (list 1 5)) #t)
+(test (same-elements? (interp-expr
+                       (parse `{with {t1 {spawn {seqn {receive} {receive}}}}
+                                     {with {t2 {spawn {seqn {receive} {receive}}}}
+                                           {with {t3 {spawn {seqn {receive} {receive}}}}
+                                                 {seqn {deliver t1 1}
+                                                       {seqn {deliver t1 2}
+                                                             {seqn {deliver t2 3}
+                                                                   {seqn {deliver t2 4}
+                                                                         {seqn {deliver t3 5}
+                                                                               {seqn {deliver t3 6}
+                                                                                     0}}}}}}}}}))
+                      (list 0 2 4 6)) #t)
 
+(test (local
+        [(define result (interp-expr
+                         (parse `{with {t1 {spawn {seqn {receive} {receive}}}}
+                                       {with {t2 {spawn {seqn {deliver t1 1} {receive}}}}
+                                             {with {t3 {spawn {seqn {deliver t2 2} {receive}}}}
+                                                   {seqn {deliver t1 3}
+                                                         {seqn {deliver t3 4}
+                                                               5}}}}})))]
+        (or (same-elements? result (list 1 4 2 5))
+            (same-elements? result (list 3 4 2 5)))) #t)
+(test (local
+        [(define result (interp-expr
+                         (parse `{with {t1 {spawn {seqn {receive} {receive}}}}
+                                       {with {t2 {spawn {seqn {deliver t1 1} {receive}}}}
+                                             {with {t3 {spawn {seqn {deliver t2 2} {receive}}}}
+                                                   {seqn {deliver t1 3}
+                                                         5}}}})))]
+        (or (same-elements? result (list 1 'blocked 2 5))
+            (same-elements? result (list 3 'blocked 2 5)))) #t)
+(test/exn (interp-expr
+           (parse '{seqn {spawn {with {q {struct {y 1} {z 2}}} {get q x}}} 6}))
+          "unknown field")
 
+(test
+ (same-elements?
+  (interp-expr
+   (parse `{with {z {spawn {- 15 {receive}}}}
+                 {with {x {spawn {deliver z {receive}}}}
+                       {seqn {deliver x 6}
+                             1}}}))
+  (list 1 6 9)) #t)
 
-;(test/exn (interp-expr (parse '{struct {z {get {struct {z 0}} y}}}))
-;            "unknown field")
-;
-;  (test (interp-expr (parse '{{fun {r}
-;                                {get r x}}
-;                              {struct {x 1}}}))
-;        1)
-;
-;  (test (interp-expr (parse '{{fun {r}
-;                                {seqn
-;                                  {set r x 5}
-;                                  {get r x}}}
-;                              {struct {x 1}}}))
-;        5)
-;
-;  (test (interp-expr (parse `{set {struct {x 42}} x 2}))
-;        42)
-;
-;  (test (interp-expr (parse '{{{{{fun {g}
-;                                   {fun {s}
-;                                     {fun {r1}
-;                                       {fun {r2}
-;                                         {+ {get r1 b}
-;                                            {seqn
-;                                              {{s r1} {g r2}}
-;                                              {+ {seqn
-;                                                   {{s r2} {g r1}}
-;                                                   {get r1 b}}
-;                                                 {get r2 b}}}}}}}}
-;                                 {fun {r} {get r a}}}            ; g
-;                                {fun {r} {fun {v} {set r b v}}}} ; s
-;                               {struct {a 0} {b 2}}}             ; r1
-;                              {struct {a 3} {b 4}}}))            ; r2
-;        5)
+(test
+ (same-elements?
+  (interp-expr
+   (parse `{with {z {spawn {- 15 {receive}}}}
+                 {deliver z {receive}}}))
+  (list 'blocked 'blocked)) #t)
+
+(test
+ (same-elements?
+  (interp-expr
+   (parse
+    `(with
+      (b (struct (x 1111)))
+      (seqn ((seqn (set b x 0) (fun (x) x))
+             (seqn (set b x 1) 0))
+            (get b x)))))
+  (list 1)) #t)
+
