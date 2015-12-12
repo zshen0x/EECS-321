@@ -45,8 +45,8 @@
   [record-set (rcd TRFAE?)
               (name symbol?)
               (value TRFAE?)]
-  [spawn (thread TRFAE?)]
-  [deliver (thread TRFAE?)
+  [spawn (thd TRFAE?)]
+  [deliver (thd TRFAE?)
            (value TRFAE?)]
   [receive]
   [seqn (expr1 TRFAE?)
@@ -91,7 +91,7 @@
 (define-type Thd
   [active (tid integer?) (go (-> Store? Thds*Store?))] ;; a trick
   [blocked (tid integer?) (continue (-> TRFAE-Value? Store? Thds*Store?))]
-  [notify (tid integer?) (message (listof TRFAE-Value?))]
+  ;[notify (tid integer?) (message (listof TRFAE-Value?))]
   [done (v TRFAE-Value?)])
 
 ;; parser: s-expr -> TRFAE
@@ -179,7 +179,7 @@
                                 (k (numV (cond
                                            [(and (numV? l-v) (numV? r-v)) (op (numV-n l-v)
                                                                               (numV-n r-v))]
-                                           [else (error "numeric operation expected number")]))
+                                           [else (error "numeric operation expected number: " l-v r-v)]))
                                    st2))))))
 ;; create and allocate a record
 ;; like num and fun be atomatic operation
@@ -315,7 +315,7 @@
                             st)]
     [spawn (thd-expr) (letrec ([new-loc (add1 (top-store st))]
                                [thd-val (thdV new-loc)]
-                               [st1 (alloc-store new-loc (list thd-val) st)])
+                               [st1 (alloc-store new-loc empty st)])
                         (thds*store (list (active new-loc
                                                   (λ (st2)
                                                     (execute-thd thd-expr
@@ -323,38 +323,40 @@
                                                                  new-loc
                                                                  st2
                                                                  (λ (v3 st3)
-                                                                   (let ([st4 (set-store new-loc (list v3) st3)])
-                                                                     (thds*store (list (done v3)) st4))))))
-                                          (notify new-loc empty)
+                                                                     (thds*store (list (done v3)) st3)))))
+                                          ;(notify new-loc empty)
                                           (active addr (λ (a-st)
                                                          (k thd-val a-st))))
                               st1))]
     [deliver (thd-expr val-expr)
              (thds*store (list (active addr
                                        (λ (sto)
-                                         (execute-thd val-expr
+                                         (execute-thd thd-expr
                                                       ds
                                                       addr
                                                       sto
                                                       (λ (v1 st1)
-                                                        (execute-thd thd-expr
+                                                        (execute-thd val-expr
                                                                      ds
                                                                      addr
                                                                      st1
                                                                      (λ (v2 st2)
-                                                                       (type-case TRFAE-Value v2
+                                                                       (type-case TRFAE-Value v1
                                                                          [thdV (loc)
-                                                                               (thds*store (list (notify loc (list v1))
-                                                                                                 (active addr
-                                                                                                         (λ (a-st)
-                                                                                                           (k v1 a-st))))
-                                                                                           st2)]
+                                                                               (let ([st3 (set-store loc
+                                                                                                     (append (lookup-store loc st2)
+                                                                                                             (list v2))
+                                                                                                     st2)])
+                                                                                 (thds*store (list ;(notify loc (list v1))
+                                                                                              (active addr
+                                                                                                      (λ (a-st)
+                                                                                                        (k v2 a-st))))
+                                                                                             st3))]
                                                                          [else (error 'execute-id "deliver expected thd")]))))))))
                          st)]
     
     [receive () (thds*store
-                 (list (blocked addr (λ (v1 st1)
-                                       (k v1 st1))))
+                 (list (blocked addr k))
                  st)]
     [seqn (e1 e2) (thds*store (list (active addr
                                             (λ (sto)
@@ -371,59 +373,40 @@
                               st)]))
 
 ; init thread and scheduler
-; run - update - cycle
-(define/contract (thds-merge thds-lst others)
-  (-> (listof Thd?) (listof Thd?) (listof Thd?))
-  (letrec ([old-ms (filter (λ (td) (notify? td)) thds-lst)]
-           [others-ms (filter (λ (td) (notify? td)) others)]
-           [rest-others (filter (λ (td) (not (notify? td))) others)]
-           [old-ms-update (map (λ (ele1)
-                                 (let ([m (findf (λ (ele2) (equal? (notify-tid ele1) (notify-tid ele2))) others-ms)])
-                                   (if m
-                                       (notify (notify-tid m) (append (notify-message ele1)
-                                                                      (notify-message m)))
-                                       ele1)))
-                                 old-ms)]
-           [new-ms-to-add (filter (λ (td)
-                                    (not (findf (λ (ele) (equal? (notify-tid td) (notify-tid ele))) old-ms)))
-                                  others-ms)]
-           [messages (append old-ms-update new-ms-to-add)]
-           [rest-thds (remove* old-ms thds-lst)]
-           [all-thds (append rest-thds rest-others messages)]
-           [blocked-thds (filter (λ (td) (blocked? td)) all-thds)]
-           [to-be-wakeup (for/list ([m messages]
-                                    #:when (blocked? (findf (λ (ele) (and (not (empty? (notify-message m)))
-                                                                          (equal? (blocked-tid ele) (notify-tid m))))
-                                                            blocked-thds)))
-                           (cons m (findf (λ (ele) (equal? (blocked-tid ele) (notify-tid m))) blocked-thds)))]
-           [wakeups (map (λ (p) (active (notify-tid (car p))
-                                        (λ (sto)
-                                          ((blocked-continue (cdr p)) (first (notify-message (car p)))
-                                                                      sto))))
-                         to-be-wakeup)]
-           [ms-updated (map (λ (p) (notify (notify-tid (car p)) (rest (notify-message (car p))))) to-be-wakeup)]
-           [to-remove (flatten to-be-wakeup)])
-    (append (remove* to-remove all-thds)
-            wakeups
-            ms-updated)))
 
-(define (threads-scheduler t*s)
+(define (scheduler t*s)
   (type-case Thds*Store t*s
     [thds*store (thds st)
-                (cond
-                  [(not (for/or ([td thds]) (active? td))) (filter (λ (td) (not (notify? td))) thds)] ;no active thread, output thds, 
-                  [else (let ([active-thds (filter (λ (thd) (active? thd)) thds)])
-                          (cond
-                            [(not (empty? active-thds)) (letrec ([a-thd (list-ref active-thds
-                                                                                  (random (length active-thds)))]
-                                                                 [rst-thds (remove a-thd thds)]
-                                                                 [t1*s1 ((active-go a-thd) st)])
-                                                          (type-case Thds*Store t1*s1
-                                                            [thds*store (thds1 st1) (let ([t2*s1 (thds*store (thds-merge rst-thds
-                                                                                                                         thds1)
-                                                                                                             st1)])
-                                                                                      (threads-scheduler t2*s1))]))]
-                            [else (threads-scheduler t*s)]))])])) ;; when all thread are blocked forever loop
+                (letrec ([dones (filter (λ (t) (done? t)) thds)]
+                         [actvs (filter (λ (t) (active? t)) thds)]
+                         [blks (filter (λ (t) (blocked? t)) thds)]
+                         [nonblks (filter (λ (t) (not (empty? (lookup-store (blocked-tid t) st)))) blks)]
+                         [rst-blks (remove* nonblks blks)])
+                  (cond
+                    [(and (empty? actvs) (empty? nonblks)) thds];return when no one to schedule
+                    [else
+                     (letrec ([schd-lst (append actvs nonblks)]
+                              [a-thd (list-ref schd-lst (random (length schd-lst)))]
+                              [schd-rst (remove a-thd schd-lst)])
+                       (type-case Thd a-thd
+                         [done (v) (error "never reach here")]
+                         [active (tid go)
+                                 (type-case Thds*Store (go st)
+                                   [thds*store (thds1 st1)
+                                               (scheduler (thds*store (append thds1
+                                                                                      schd-rst
+                                                                                      dones
+                                                                                      rst-blks)
+                                                                              st1))])]
+                         [blocked (tid continue) (letrec ([m (lookup-store tid st)]
+                                                          [st1 (set-store tid (rest m) st)])
+                                                   (type-case Thds*Store (continue (first m) st1)
+                                                     [thds*store (thds1 st2)
+                                                                 (scheduler (thds*store (append thds1
+                                                                                                schd-rst
+                                                                                                dones
+                                                                                                rst-blks)
+                                                                                        st2))]))]))]))])) 
 
 (define (interp-expr a-trfae)
   (letrec ([init-thds-pool (thds*store (list (active 0 (λ (sto)
@@ -431,12 +414,11 @@
                                                                       (mtSub)
                                                                         0
                                                                         (aSto 0
-                                                                              (list (thdV 0))
+                                                                              empty
                                                                               sto)
                                                                         (λ (v st)
-                                                                          (let ([st1 (set-store 0 (list v) st)])
-                                                                            (thds*store (list (done v)) st1))))))
-                                             (notify 0 empty))
+                                                                          (thds*store (list (done v)) st))))))
+                                             ;(notify 0 empty))
                                        (mtSto))])
     (map (λ (done-thd)
            (type-case Thd done-thd
@@ -444,10 +426,10 @@
                          [numV (n) n]
                          [closureV (x y z) 'procedure]
                          [thdV (addr) 'thd]
-                         [recV (x y z) (error 'bug "never reach here!")])]
+                         [recV (x y z) 'struct])]
              [blocked (tid continue) 'blocked]
              [else (error 'bug "never reach here!")]))
-         (threads-scheduler init-thds-pool))))
+         (scheduler init-thds-pool))))
 
 
 ;(define (threads-scheduler-debug t*s)
@@ -712,3 +694,11 @@
       '(0 1))
       #t)
 
+
+(interp-expr
+  (parse
+   `(with
+     (t1 (spawn (deliver (receive) (+ 3 (receive)))))
+     (with
+      (t2 (spawn (+ 5 (receive))))
+      (seqn (deliver t1 t2) (seqn (deliver t1 11) 0))))))
